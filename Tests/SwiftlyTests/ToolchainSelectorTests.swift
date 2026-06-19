@@ -63,6 +63,20 @@ import Testing
         try runTest(.snapshot(branch: .release(major: 5, minor: 7, patch: "x"), date: nil), parses)
     }
 
+    /// From Swift 6.4 onward the swift.org URL scheme uses `X.Y.x`, so a bare
+    /// `6.4-snapshot` (no explicit patch) is normalized to `patch: "x"`.
+    @Test func parseReleaseSnapshotWithoutPatch() throws {
+        let parses = [
+            "6.4-snapshot",
+            "6.4-SNAPSHOT",
+            "6.4-DEVELOPMENT-SNAPSHOT",
+            "swift-6.4-snapshot",
+            "swift-6.4-SNAPSHOT",
+            "swift-6.4-DEVELOPMENT-SNAPSHOT",
+        ]
+        try runTest(.snapshot(branch: .release(major: 6, minor: 4, patch: "x"), date: nil), parses)
+    }
+
     @Test func parseReleaseSnapshotWithDate() throws {
         let parses = [
             "5.7-snapshot-2023-06-05",
