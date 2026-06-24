@@ -120,6 +120,9 @@ jobs:
               mv /tmp/_th.swift "$SUBTHREAD"
               echo "Patched $SUBTHREAD (typealiases)"
             }
+            # Remove stray column-0 #endif left by a prior bad undo (awk guard race)
+            awk 'prev == "    var thread = pthread_t()" && /^#endif$/{next} {prev=$0; print}' \
+              "$SUBTHREAD" > /tmp/_th.swift && mv /tmp/_th.swift "$SUBTHREAD"
             # pthread_t is also opaque on FreeBSD: exclude from canImport(Glibc)
             # so FreeBSD falls into #else branch and uses pthread_t? like macOS
             grep -qF '!os(FreeBSD) && !os(OpenBSD)) || canImport(Bionic)' "$SUBTHREAD" || {
