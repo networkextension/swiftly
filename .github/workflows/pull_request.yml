@@ -291,6 +291,15 @@ jobs:
             sed -i '' 's/#if !os(OpenBSD)$/#if !os(OpenBSD) \&\& !os(FreeBSD) \/* FreeBSD-inpktinfo-fix *\//' "$CTRL"
             echo "Patched $CTRL"
           fi
+          # swift-nio NonBlockingFileIO.swift: uses d_fileno (OpenBSD) vs d_ino (others).
+          # FreeBSD also uses d_fileno, so add os(FreeBSD) to the OpenBSD condition.
+          NBFIO=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/NonBlockingFileIO.swift" 2>/dev/null | head -1)
+          if [ -n "$NBFIO" ]; then
+            grep -qF 'FreeBSD-dfileno-fix' "$NBFIO" || {
+              sed -i '' 's/#if os(OpenBSD)$/#if os(OpenBSD) || os(FreeBSD) \/* FreeBSD-dfileno-fix *\//' "$NBFIO"
+              echo "Patched $NBFIO"
+            }
+          fi
           # swift-service-lifecycle Lock.swift: only #if os(Windows)/#else, no FreeBSD case.
           # Insert #elseif os(OpenBSD||FreeBSD) with pthread_mutex_t? before the #else branch,
           # and fix pthread_mutexattr_t() which has no default init on FreeBSD.
