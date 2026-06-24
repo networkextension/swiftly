@@ -233,12 +233,52 @@ jobs:
               echo "Patched $SEL"
             }
           fi
-          # swift-nio SelectorKqueue.swift: entire file gated on Darwin||OpenBSD; FreeBSD has kqueue
+          # swift-nio SelectorKqueue.swift: entire file gated on Darwin||OpenBSD; FreeBSD has kqueue.
+          # Also EVFILT_EXCEPT is Darwin/OpenBSD-only; FreeBSD kqueue does not have it.
+          # Fix 1: add os(FreeBSD) to file guard.
+          # Fix 2: guard EVFILT_EXCEPT loop entry, replace fallthrough with inline readEOF
+          #        handling for FreeBSD, and guard the case EVFILT_EXCEPT: block.
           KQSEL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SelectorKqueue.swift" 2>/dev/null | head -1)
           if [ -n "$KQSEL" ]; then
             grep -qF 'os(FreeBSD)' "$KQSEL" || {
               sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$KQSEL"
-              echo "Patched $KQSEL"
+              echo "Patched $KQSEL (file guard)"
+            }
+            grep -qF 'FreeBSD-evfilt-fix' "$KQSEL" || {
+              awk '
+              /[(]KQueueEventFilterSet[.]read, EVFILT_READ[)], [(][.]write, EVFILT_WRITE[)], [(][.]except, EVFILT_EXCEPT[)],/ && !loop_done {
+                sub(", [(][.]except, EVFILT_EXCEPT[)],", ",")
+                print
+                print "            #if !os(FreeBSD) /* FreeBSD-evfilt-fix */"
+                print "            (.except, EVFILT_EXCEPT),"
+                print "            #endif"
+                loop_done=1
+                next
+              }
+              /fallthrough.*EVFILT_READ.*EV_EOF/ && !fall_done {
+                print "            #if !os(FreeBSD)"
+                print
+                print "            #else"
+                print "                if Int32(ev.flags) & EV_EOF != 0 && registration.interested.contains(.readEOF) {"
+                print "                    selectorEvent.formUnion(.readEOF)"
+                print "                }"
+                print "            #endif"
+                fall_done=1
+                next
+              }
+              /^            case EVFILT_EXCEPT:$/ && !case_done {
+                print "            #if !os(FreeBSD)"
+                print
+                case_done=1
+                next
+              }
+              case_done && /^            case EVFILT_WRITE:$/ {
+                print "            #endif"
+                case_done=0
+              }
+              1' "$KQSEL" > /tmp/_kqsel.swift
+              mv /tmp/_kqsel.swift "$KQSEL"
+              echo "Patched $KQSEL (EVFILT_EXCEPT)"
             }
           fi
           # swift-nio Interfaces.swift: dstaddr/broadaddr getters missing FreeBSD
