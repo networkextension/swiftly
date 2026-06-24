@@ -194,6 +194,49 @@ jobs:
               echo "Patched $SEL"
             }
           fi
+          # swift-nio SelectorKqueue.swift: entire file gated on Darwin||OpenBSD; FreeBSD has kqueue
+          KQSEL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SelectorKqueue.swift" 2>/dev/null | head -1)
+          if [ -n "$KQSEL" ]; then
+            grep -qF 'os(FreeBSD)' "$KQSEL" || {
+              sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$KQSEL"
+              echo "Patched $KQSEL"
+            }
+          fi
+          # swift-nio Interfaces.swift: dstaddr/broadaddr getters missing FreeBSD
+          IFACE=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/Interfaces.swift" 2>/dev/null | head -1)
+          if [ -n "$IFACE" ]; then
+            grep -qF 'os(FreeBSD)' "$IFACE" || {
+              sed -i '' 's/canImport(Darwin) || os(OpenBSD)/canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/g' "$IFACE"
+              echo "Patched $IFACE"
+            }
+          fi
+          # swift-nio System.swift: multiple guards missing FreeBSD for kqueue + syscalls + fstat
+          SYSF=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/System.swift" 2>/dev/null | head -1)
+          if [ -n "$SYSF" ]; then
+            grep -qF 'FreeBSD-system-fix' "$SYSF" || {
+              sed -i '' 's/#if os(Linux) || os(Android) || canImport(Darwin) || os(OpenBSD)$/#if os(Linux) || os(Android) || os(FreeBSD) || canImport(Darwin) || os(OpenBSD)/' "$SYSF"
+              sed -i '' 's/#elseif os(Linux) || os(Android) || os(OpenBSD)$/#elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)/' "$SYSF"
+              sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$SYSF"
+              awk '/^private let sysRecvMmsg = CNIOLinux_recvmmsg$/ && !fbsd {
+                print; print "#elseif os(FreeBSD)"
+                print "private let sysKevent = kevent"
+                print "private let sysSendMmsg = CNIOLinux_sendmmsg"
+                print "private let sysRecvMmsg = CNIOLinux_recvmmsg"
+                fbsd=1; next}
+              /^internal typealias kevent_timespec = CNIOOpenBSD\.timespec$/ {
+                print; print "#elseif os(FreeBSD)"
+                print "internal typealias kevent_timespec = Glibc.timespec"
+                next}
+              /^            CNIOOpenBSD\.kqueue\(\)$/ {
+                print; print "            #elseif os(FreeBSD)"
+                print "            Glibc.kqueue()"
+                next}
+              1' "$SYSF" > /tmp/_sys.swift
+              mv /tmp/_sys.swift "$SYSF"
+              printf '/* FreeBSD-system-fix */' >> "$SYSF"
+              echo "Patched $SYSF"
+            }
+          fi
           # swift-service-lifecycle Lock.swift: only #if os(Windows)/#else, no FreeBSD case.
           # Insert #elseif os(OpenBSD||FreeBSD) with pthread_mutex_t? before the #else branch,
           # and fix pthread_mutexattr_t() which has no default init on FreeBSD.
