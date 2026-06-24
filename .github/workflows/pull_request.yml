@@ -72,7 +72,7 @@ jobs:
           # Reset first (same reason as System.swift: board retains modified files).
           CNIOLINUX=$(find .build/checkouts -path "*/CNIOLinux/include/CNIOLinux.h" 2>/dev/null | head -1)
           if [ -n "$CNIOLINUX" ]; then
-            CNIODIR=$(dirname "$(dirname "$(dirname "$CNIOLINUX")")")
+            CNIODIR=$(dirname "$(dirname "$(dirname "$(dirname "$CNIOLINUX")")")")
             git -C "$CNIODIR" checkout HEAD -- Sources/CNIOLinux/include/CNIOLinux.h
             awk '
             /^\/\/ Some explanation is required here\.$/ && !bsd {
