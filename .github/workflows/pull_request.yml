@@ -262,6 +262,23 @@ jobs:
               echo "Patched $LOCKING"
             }
           fi
+          # swift-nio System.swift: CNIOLinux_in6_pktinfo is defined in CNIOLinux.h but not
+          # exported to FreeBSD; FreeBSD has native in6_pktinfo in Glibc — skip the typealias.
+          if [ -n "$SYSF" ]; then
+            grep -qF 'FreeBSD-in6pktinfo-fix' "$SYSF" || {
+              sed -i '' 's/^internal typealias in6_pktinfo = CNIOLinux_in6_pktinfo$/\/* FreeBSD-in6pktinfo-fix *\/\n#if !os(FreeBSD)\ninternal typealias in6_pktinfo = CNIOLinux_in6_pktinfo\n#endif/' "$SYSF"
+              echo "Patched $SYSF (in6_pktinfo)"
+            }
+          fi
+          # swift-nio ControlMessage.swift: in_pktinfo is Linux-only (struct from linux/in.h);
+          # FreeBSD uses IP_RECVDSTADDR instead of IP_PKTINFO/in_pktinfo.
+          CTRL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/ControlMessage.swift" 2>/dev/null | head -1)
+          if [ -n "$CTRL" ]; then
+            grep -qF 'FreeBSD-inpktinfo-fix' "$CTRL" || {
+              sed -i '' 's/#if !os(OpenBSD)$/#if !os(OpenBSD) \&\& !os(FreeBSD) \/* FreeBSD-inpktinfo-fix *\//g' "$CTRL"
+              echo "Patched $CTRL (in_pktinfo)"
+            }
+          fi
           swift build 2>&1
           swift test --filter SwiftlyTests 2>&1
           ENDSSH
