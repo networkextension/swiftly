@@ -210,32 +210,47 @@ jobs:
               echo "Patched $IFACE"
             }
           fi
-          # swift-nio System.swift: multiple guards missing FreeBSD for kqueue + syscalls + fstat
+          # swift-nio System.swift: multiple guards missing FreeBSD for kqueue + syscalls + fstat.
+          # Always reset to pristine HEAD before patching — board retains modified files across
+          # CI runs (swift package resolve doesn't reset them), causing double-patch corruption.
           SYSF=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/System.swift" 2>/dev/null | head -1)
           if [ -n "$SYSF" ]; then
-            grep -qF 'FreeBSD-system-fix' "$SYSF" || {
-              sed -i '' 's/#if os(Linux) || os(Android) || canImport(Darwin) || os(OpenBSD)$/#if os(Linux) || os(Android) || os(FreeBSD) || canImport(Darwin) || os(OpenBSD)/' "$SYSF"
-              sed -i '' 's/#elseif os(Linux) || os(Android) || os(OpenBSD)$/#elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)/' "$SYSF"
-              sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$SYSF"
-              awk '/^private let sysRecvMmsg = CNIOLinux_recvmmsg$/ && !fbsd {
-                print; print "#elseif os(FreeBSD)"
-                print "private let sysKevent = kevent"
-                print "private let sysSendMmsg = CNIOLinux_sendmmsg"
-                print "private let sysRecvMmsg = CNIOLinux_recvmmsg"
-                fbsd=1; next}
-              /^internal typealias kevent_timespec = CNIOOpenBSD\.timespec$/ {
-                print; print "#elseif os(FreeBSD)"
-                print "internal typealias kevent_timespec = Glibc.timespec"
-                next}
-              /^            CNIOOpenBSD\.kqueue\(\)$/ {
-                print; print "            #elseif os(FreeBSD)"
-                print "            Glibc.kqueue()"
-                next}
-              1' "$SYSF" > /tmp/_sys.swift
-              mv /tmp/_sys.swift "$SYSF"
-              printf '/* FreeBSD-system-fix */' >> "$SYSF"
-              echo "Patched $SYSF"
-            }
+            NIODIR=$(dirname "$(dirname "$(dirname "$SYSF")")")
+            git -C "$NIODIR" checkout HEAD -- Sources/NIOPosix/System.swift
+            sed -i '' 's/#if os(Linux) || os(Android) || canImport(Darwin) || os(OpenBSD)$/#if os(Linux) || os(Android) || os(FreeBSD) || canImport(Darwin) || os(OpenBSD)/' "$SYSF"
+            sed -i '' 's/#elseif os(Linux) || os(Android) || os(OpenBSD)$/#elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)/' "$SYSF"
+            sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$SYSF"
+            awk '/^internal typealias in6_pktinfo = CNIOLinux_in6_pktinfo$/ {
+              print "/* FreeBSD-in6pktinfo-fix */"
+              print "#if !os(FreeBSD)"
+              print; print "#endif"; next}
+            /^private let sysRecvMmsg = CNIOLinux_recvmmsg$/ && !fbsd {
+              print; print "#elseif os(FreeBSD)"
+              print "private let sysKevent = kevent"
+              print "private let sysSendMmsg = CNIOLinux_sendmmsg"
+              print "private let sysRecvMmsg = CNIOLinux_recvmmsg"
+              fbsd=1; next}
+            /^internal typealias kevent_timespec = CNIOOpenBSD\.timespec$/ {
+              print; print "#elseif os(FreeBSD)"
+              print "internal typealias kevent_timespec = Glibc.timespec"
+              next}
+            /^            CNIOOpenBSD\.kqueue\(\)$/ {
+              print; print "            #elseif os(FreeBSD)"
+              print "            Glibc.kqueue()"
+              next}
+            1' "$SYSF" > /tmp/_sys.swift
+            mv /tmp/_sys.swift "$SYSF"
+            echo "Patched $SYSF"
+          fi
+          # swift-nio ControlMessage.swift: in_pktinfo is Linux-only (struct from linux/in.h).
+          # FreeBSD uses IP_RECVDSTADDR instead; exclude FreeBSD from in_pktinfo usage.
+          # Also reset to pristine HEAD first for the same reason as System.swift above.
+          CTRL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/ControlMessage.swift" 2>/dev/null | head -1)
+          if [ -n "$CTRL" ]; then
+            NIODIR=$(dirname "$(dirname "$(dirname "$CTRL")")")
+            git -C "$NIODIR" checkout HEAD -- Sources/NIOPosix/ControlMessage.swift
+            sed -i '' 's/#if !os(OpenBSD)$/#if !os(OpenBSD) \&\& !os(FreeBSD) \/* FreeBSD-inpktinfo-fix *\//' "$CTRL"
+            echo "Patched $CTRL"
           fi
           # swift-service-lifecycle Lock.swift: only #if os(Windows)/#else, no FreeBSD case.
           # Insert #elseif os(OpenBSD||FreeBSD) with pthread_mutex_t? before the #else branch,
@@ -260,23 +275,6 @@ jobs:
             grep -qF "os(FreeBSD) || os(OpenBSD)" "$LOCKING" || {
               sed -i '' 's/^  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)$/  #elseif os(FreeBSD) || os(OpenBSD)\n  typealias Primitive = pthread_mutex_t?\n  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)/' "$LOCKING"
               echo "Patched $LOCKING"
-            }
-          fi
-          # swift-nio System.swift: CNIOLinux_in6_pktinfo is defined in CNIOLinux.h but not
-          # exported to FreeBSD; FreeBSD has native in6_pktinfo in Glibc — skip the typealias.
-          if [ -n "$SYSF" ]; then
-            grep -qF 'FreeBSD-in6pktinfo-fix' "$SYSF" || {
-              sed -i '' 's/^internal typealias in6_pktinfo = CNIOLinux_in6_pktinfo$/\/* FreeBSD-in6pktinfo-fix *\/\n#if !os(FreeBSD)\ninternal typealias in6_pktinfo = CNIOLinux_in6_pktinfo\n#endif/' "$SYSF"
-              echo "Patched $SYSF (in6_pktinfo)"
-            }
-          fi
-          # swift-nio ControlMessage.swift: in_pktinfo is Linux-only (struct from linux/in.h);
-          # FreeBSD uses IP_RECVDSTADDR instead of IP_PKTINFO/in_pktinfo.
-          CTRL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/ControlMessage.swift" 2>/dev/null | head -1)
-          if [ -n "$CTRL" ]; then
-            grep -qF 'FreeBSD-inpktinfo-fix' "$CTRL" || {
-              sed -i '' 's/#if !os(OpenBSD)$/#if !os(OpenBSD) \&\& !os(FreeBSD) \/* FreeBSD-inpktinfo-fix *\//g' "$CTRL"
-              echo "Patched $CTRL (in_pktinfo)"
             }
           fi
           swift build 2>&1
