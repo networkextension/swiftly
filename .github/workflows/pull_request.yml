@@ -63,19 +63,19 @@ jobs:
           . "$HOME/swift632-env.sh"
           cd "$HOME/ci/swiftly"
           swift package resolve 2>&1
-          # CNIOLinux: ALL content in shim.c is inside #ifdef __linux__, so on FreeBSD
-          # none of the CNIOLinux types or functions exist. The header defines the structs
-          # outside the linux guard but uses struct msghdr (from sys/socket.h) which is
-          # only included inside the linux block. Fix: inject a FreeBSD section that
-          # includes the needed headers and provides static inline implementations, then
-          # guard the original Linux-only declarations with #else /* !__FreeBSD__ */.
-          # Reset first (same reason as System.swift: board retains modified files).
+          # CNIOLinux: ALL content in shim.c is inside #ifdef __linux__. The header has two
+          # #ifdef __linux__ blocks; the second one (after liburing_nio.h include) wraps ALL
+          # the typedef and function declarations through line 180. Fix: inject a FreeBSD
+          # section AFTER #include "liburing_nio.h" (between the two linux blocks, outside
+          # both), providing static inline implementations of all needed functions.
+          # Reset first to prevent double-patch from board retaining modified files across CI runs.
           CNIOLINUX=$(find .build/checkouts -path "*/CNIOLinux/include/CNIOLinux.h" 2>/dev/null | head -1)
           if [ -n "$CNIOLINUX" ]; then
             CNIODIR=$(dirname "$(dirname "$(dirname "$(dirname "$CNIOLINUX")")")")
             git -C "$CNIODIR" checkout HEAD -- Sources/CNIOLinux/include/CNIOLinux.h
             awk '
-            /^\/\/ Some explanation is required here\.$/ && !bsd {
+            /^#include "liburing_nio.h"$/ && !freebsd_done {
+              print
               print "#if defined(__FreeBSD__) /* FreeBSD-cniolinux-fix */"
               print "#include <sys/socket.h>"
               print "#include <netinet/in.h>"
@@ -94,11 +94,9 @@ jobs:
               print "static inline int CNIOLinux_pthread_setname_np(pthread_t t,const char *n){pthread_set_name_np(t,n);return 0;}"
               print "static inline int CNIOLinux_pthread_getname_np(pthread_t t,char *n,size_t l){pthread_get_name_np(t,n,l);return 0;}"
               print "static inline int CNIOLinux_accept4(int s,struct sockaddr *a,socklen_t *l,int f){return accept4(s,a,l,f);}"
-              print "#else /* !__FreeBSD__ */"
-              bsd=1
-            }
-            /^size_t CNIOLinux_CMSG_SPACE\(size_t\);$/ && bsd && !closed {
-              print; print "#endif /* !__FreeBSD__ */"; closed=1; next
+              print "#endif /* __FreeBSD__ */"
+              freebsd_done=1
+              next
             }
             1' "$CNIOLINUX" > /tmp/_cniolinux.h
             mv /tmp/_cniolinux.h "$CNIOLINUX"
