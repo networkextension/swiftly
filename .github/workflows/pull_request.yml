@@ -149,6 +149,49 @@ jobs:
               echo "Patched $NIOLOCK"
             }
           fi
+          # swift-nio BSDSocketAPI.swift: #else #error — add #elseif os(FreeBSD) with Glibc
+          BSD=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/BSDSocketAPI.swift" 2>/dev/null | head -1)
+          if [ -n "$BSD" ]; then
+            grep -qF 'FreeBSD-bsdsocket-fix' "$BSD" || {
+              awk '/^#elseif canImport\(Darwin\)$/ && !done {
+                print "#elseif os(FreeBSD)"
+                print "/* FreeBSD-bsdsocket-fix */"
+                print "@preconcurrency import Glibc"
+                print ""
+                print "private let sysInet_ntop:"
+                print "    @convention(c) (CInt, UnsafeRawPointer?, UnsafeMutablePointer<CChar>?, socklen_t) -> UnsafePointer<CChar>? ="
+                print "        inet_ntop"
+                print "private let sysInet_pton: @convention(c) (CInt, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> CInt = inet_pton"
+                done=1
+              }
+              1' "$BSD" > /tmp/_bsd.swift
+              mv /tmp/_bsd.swift "$BSD"
+              echo "Patched $BSD"
+            }
+          fi
+          # swift-nio SocketOptionProvider.swift: #else #error — add #elseif os(FreeBSD) with Glibc
+          SOP=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/SocketOptionProvider.swift" 2>/dev/null | head -1)
+          if [ -n "$SOP" ]; then
+            grep -qF 'FreeBSD-sockopt-fix' "$SOP" || {
+              awk '/^#elseif os\(Windows\)$/ && !done {
+                print "#elseif os(FreeBSD)"
+                print "/* FreeBSD-sockopt-fix */"
+                print "@preconcurrency import Glibc"
+                done=1
+              }
+              1' "$SOP" > /tmp/_sop.swift
+              mv /tmp/_sop.swift "$SOP"
+              echo "Patched $SOP"
+            }
+          fi
+          # swift-nio SelectorGeneric.swift: FreeBSD uses kqueue like Darwin/OpenBSD
+          SEL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SelectorGeneric.swift" 2>/dev/null | head -1)
+          if [ -n "$SEL" ]; then
+            grep -qF 'os(FreeBSD)' "$SEL" || {
+              sed -i '' 's/canImport(Darwin) || os(OpenBSD)/canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/g' "$SEL"
+              echo "Patched $SEL"
+            }
+          fi
           # swift-service-lifecycle Lock.swift: only #if os(Windows)/#else, no FreeBSD case.
           # Insert #elseif os(OpenBSD||FreeBSD) with pthread_mutex_t? before the #else branch,
           # and fix pthread_mutexattr_t() which has no default init on FreeBSD.
