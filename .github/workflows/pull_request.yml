@@ -149,7 +149,9 @@ jobs:
               echo "Patched $NIOLOCK"
             }
           fi
-          # swift-nio BSDSocketAPI.swift: #else #error — add #elseif os(FreeBSD) with Glibc
+          # swift-nio BSDSocketAPI.swift: #else #error — add #elseif os(FreeBSD) with Glibc.
+          # FreeBSD arpa/inet.h renames inet_ntop→__inet_ntop via macro when __BSD_VISIBLE=1,
+          # so Swift sees __inet_ntop/__inet_pton instead of the POSIX names.
           BSD=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/BSDSocketAPI.swift" 2>/dev/null | head -1)
           if [ -n "$BSD" ]; then
             grep -qF 'FreeBSD-bsdsocket-fix' "$BSD" || {
@@ -160,8 +162,8 @@ jobs:
                 print ""
                 print "private let sysInet_ntop:"
                 print "    @convention(c) (CInt, UnsafeRawPointer?, UnsafeMutablePointer<CChar>?, socklen_t) -> UnsafePointer<CChar>? ="
-                print "        inet_ntop"
-                print "private let sysInet_pton: @convention(c) (CInt, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> CInt = inet_pton"
+                print "        __inet_ntop"
+                print "private let sysInet_pton: @convention(c) (CInt, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> CInt = __inet_pton"
                 done=1
               }
               1' "$BSD" > /tmp/_bsd.swift
