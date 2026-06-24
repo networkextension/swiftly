@@ -130,6 +130,39 @@ jobs:
               echo "Patched $SUBTHREAD (pthread_t? fix)"
             }
           fi
+          # swift-nio lock.swift: has os(OpenBSD) already — add || os(FreeBSD) to all guards
+          NIOLOCK=$(find .build/checkouts -path "*/swift-nio/Sources/NIOConcurrencyHelpers/lock.swift" 2>/dev/null | head -1)
+          if [ -n "$NIOLOCK" ]; then
+            grep -qF "os(OpenBSD) || os(FreeBSD)" "$NIOLOCK" || {
+              sed -i '' 's/os(OpenBSD)/os(OpenBSD) || os(FreeBSD)/g' "$NIOLOCK"
+              echo "Patched $NIOLOCK"
+            }
+          fi
+          # swift-service-lifecycle Lock.swift: only #if os(Windows)/#else, no FreeBSD case.
+          # Insert #elseif os(OpenBSD||FreeBSD) with pthread_mutex_t? before the #else branch,
+          # and fix pthread_mutexattr_t() which has no default init on FreeBSD.
+          SVC=$(find .build/checkouts -path "*/swift-service-lifecycle*/ConcurrencyHelpers/Lock.swift" 2>/dev/null | head -1)
+          if [ -n "$SVC" ]; then
+            grep -qF "LockPrimitive = pthread_mutex_t?" "$SVC" || {
+              awk '/^typealias LockPrimitive = SRWLOCK$/{a=1; print; next}
+                a&&/^#else$/{print "#elseif os(OpenBSD) || os(FreeBSD)"; a=0; b=1; next}
+                b&&/^@usableFromInline$/{b=0; print; c=1; next}
+                c&&/^typealias LockPrimitive = pthread_mutex_t$/{print "typealias LockPrimitive = pthread_mutex_t?\n#else\n@usableFromInline\n"$0; c=0; next}
+                1' "$SVC" > /tmp/_svc.swift
+              mv /tmp/_svc.swift "$SVC"
+              sed -i '' 's/var attr = pthread_mutexattr_t()/var attr: pthread_mutexattr_t? = pthread_mutexattr_t(bitPattern: 0)/' "$SVC"
+              echo "Patched $SVC"
+            }
+          fi
+          # swift-async-algorithms Locking.swift: Glibc branch uses pthread_mutex_t.
+          # Add os(FreeBSD)||os(OpenBSD) branch BEFORE it (2-space indent = typealias block only).
+          LOCKING=$(find .build/checkouts -path "*/swift-async-algorithms*/AsyncAlgorithms/Locking.swift" 2>/dev/null | head -1)
+          if [ -n "$LOCKING" ]; then
+            grep -qF "os(FreeBSD) || os(OpenBSD)" "$LOCKING" || {
+              sed -i '' 's/^  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)$/  #elseif os(FreeBSD) || os(OpenBSD)\n  typealias Primitive = pthread_mutex_t?\n  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)/' "$LOCKING"
+              echo "Patched $LOCKING"
+            }
+          fi
           swift build 2>&1
           swift test --filter SwiftlyTests 2>&1
           ENDSSH
