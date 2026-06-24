@@ -76,6 +76,17 @@ jobs:
               echo "Patched $SSL_LIB"
             }
           fi
+          # async-http-client CAsyncHTTPClient.c: strptime_l is behind __BSD_VISIBLE in
+          # FreeBSD time.h; no locale.h included for FreeBSD. Forward-declare both.
+          AHC=$(find .build/checkouts -path "*/CAsyncHTTPClient/CAsyncHTTPClient.c" 2>/dev/null | head -1)
+          if [ -n "$AHC" ]; then
+            grep -qF 'FreeBSD-strptime-fix' "$AHC" || {
+              awk 'NR==1{print "/* FreeBSD-strptime-fix */\n#if defined(__FreeBSD__)\n#include <locale.h>\nextern char *strptime_l(const char *, const char *, struct tm *, locale_t);\n#endif"}1' \
+                "$AHC" > /tmp/_ahc.c
+              mv /tmp/_ahc.c "$AHC"
+              echo "Patched $AHC"
+            }
+          fi
           # CNIOBoringSSL: getentropy in unistd.h is behind __BSD_VISIBLE on FreeBSD.
           # Forward-declare it directly so no feature macros are needed.
           GE=$(find .build/checkouts -path "*/CNIOBoringSSL*/crypto/rand/getentropy.cc" 2>/dev/null | head -1)
