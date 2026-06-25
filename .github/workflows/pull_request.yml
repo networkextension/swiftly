@@ -60,6 +60,12 @@ jobs:
         run: |
           ssh -F "$HOME/.ssh/config" freebsd-ci /bin/sh << 'ENDSSH'
           set -e
+          # Kill any swift processes left over from a previous cancelled/timed-out run.
+          # This prevents concurrent build/test from corrupting the shared .build directory.
+          pkill -u swift -x swift-test 2>/dev/null || true
+          pkill -u swift -x swift-build 2>/dev/null || true
+          pkill -u swift -f "swift-package resolve" 2>/dev/null || true
+          pkill -u swift -f "swiftlyPackageTests.xctest" 2>/dev/null || true
           . "$HOME/swift632-env.sh"
           cd "$HOME/ci/swiftly"
           # Reset swift-nio checkout before resolve so SwiftPM can update it cleanly.
@@ -277,6 +283,11 @@ jobs:
           set -e
           # Ensure gnupg is installed — tests use gpg to sign mock toolchain archives.
           which gpg >/dev/null 2>&1 || sudo pkg install -y gnupg 2>&1 || true
+          # Kill any swift processes left over from a previous cancelled/timed-out run.
+          pkill -u swift -x swift-test 2>/dev/null || true
+          pkill -u swift -x swift-build 2>/dev/null || true
+          pkill -u swift -f "swift-package resolve" 2>/dev/null || true
+          pkill -u swift -f "swiftlyPackageTests.xctest" 2>/dev/null || true
           . "$HOME/swift632-env.sh"
           cd "$HOME/ci/swiftly"
           _NIODIR_PRE=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
