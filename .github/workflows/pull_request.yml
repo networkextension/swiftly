@@ -62,6 +62,16 @@ jobs:
           set -e
           . "$HOME/swift632-env.sh"
           cd "$HOME/ci/swiftly"
+          # Reset swift-nio checkout before resolve so SwiftPM can update it cleanly.
+          # Without this, files added by a previous networkextension branch switch
+          # (e.g. .github/workflows/freebsd-aarch64.yml) cause "local changes would
+          # be overwritten" when the branch updates between runs.
+          _NIODIR_PRE=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
+          if [ -n "$_NIODIR_PRE" ]; then
+            git config --global --add safe.directory "$(realpath "$_NIODIR_PRE")" 2>/dev/null || true
+            git -C "$_NIODIR_PRE" reset --hard 2>/dev/null || true
+            git -C "$_NIODIR_PRE" clean -ffd 2>/dev/null || true
+          fi
           swift package resolve 2>&1
           # swift-nio: switch checkout to FreeBSD-patched fork branch
           # networkextension/swift-nio freebsd-compat-2.93.0 is based on the 2.93.0 tag
@@ -69,7 +79,8 @@ jobs:
           NIODIR=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
           if [ -n "$NIODIR" ]; then
             git config --global --add safe.directory "$(realpath "$NIODIR")" 2>/dev/null || true
-            git -C "$NIODIR" checkout HEAD -- . 2>/dev/null || true
+            git -C "$NIODIR" reset --hard 2>/dev/null || true
+            git -C "$NIODIR" clean -ffd 2>/dev/null || true
             git -C "$NIODIR" remote add networkextension https://github.com/networkextension/swift-nio.git 2>/dev/null || true
             git -C "$NIODIR" fetch networkextension freebsd-compat-2.93.0
             git -C "$NIODIR" checkout networkextension/freebsd-compat-2.93.0
