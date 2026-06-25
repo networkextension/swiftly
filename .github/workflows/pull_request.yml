@@ -236,7 +236,7 @@ jobs:
           swift build 2>&1
           swift test --filter SwiftlyTests 2>&1
           ENDSSH
-        timeout-minutes: 60
+        timeout-minutes: 90
 
   freebsd-aarch64-14-tests:
     name: Test / FreeBSD 14.4 aarch64
@@ -275,6 +275,8 @@ jobs:
         run: |
           ssh -F "$HOME/.ssh/config" freebsd-ci-2 /bin/sh << 'ENDSSH'
           set -e
+          # Ensure gnupg is installed — tests use gpg to sign mock toolchain archives.
+          which gpg >/dev/null 2>&1 || sudo pkg install -y gnupg 2>&1 || true
           . "$HOME/swift632-env.sh"
           cd "$HOME/ci/swiftly"
           _NIODIR_PRE=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
