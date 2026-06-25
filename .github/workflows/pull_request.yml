@@ -68,6 +68,7 @@ jobs:
           # be overwritten" when the branch updates between runs.
           _NIODIR_PRE=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
           if [ -n "$_NIODIR_PRE" ]; then
+            doas chown -R swift "$_NIODIR_PRE/.git" 2>/dev/null || true
             git config --global --add safe.directory "$(realpath "$_NIODIR_PRE")" 2>/dev/null || true
             git -C "$_NIODIR_PRE" reset --hard 2>/dev/null || true
             git -C "$_NIODIR_PRE" clean -ffd 2>/dev/null || true
@@ -78,6 +79,7 @@ jobs:
           # and carries all FreeBSD compatibility fixes as proper source edits.
           NIODIR=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
           if [ -n "$NIODIR" ]; then
+            doas chown -R swift "$NIODIR/.git" 2>/dev/null || true
             git config --global --add safe.directory "$(realpath "$NIODIR")" 2>/dev/null || true
             git -C "$NIODIR" reset --hard 2>/dev/null || true
             git -C "$NIODIR" clean -ffd 2>/dev/null || true
