@@ -296,6 +296,18 @@ jobs:
             mv /tmp/_kqsel.swift "$KQSEL"
             echo "Patched $KQSEL (EVFILT_EXCEPT two-loop)"
           fi
+          # swift-nio ThreadPosix.swift: FreeBSD not in any typedef branch, leaving
+          # ThreadDestructor/sys_pthread_{get,set}name_np undefined. Fix:
+          # (1) add os(FreeBSD) to Linux typedef block (uses CNIOLinux wrappers already patched),
+          # (2) add os(FreeBSD) to OpenBSD sysPthread_create path (pthread_attr_t is a pointer on FreeBSD).
+          THPOS=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/ThreadPosix.swift" 2>/dev/null | head -1)
+          if [ -n "$THPOS" ]; then
+            grep -qF 'FreeBSD-thread-fix' "$THPOS" || {
+              sed -i '' 's/#if os(Linux) || os(Android)$/#if os(Linux) || os(Android) || os(FreeBSD) \/* FreeBSD-thread-fix *\//' "$THPOS"
+              sed -i '' 's/#elseif os(OpenBSD)$/#elseif os(OpenBSD) || os(FreeBSD)/' "$THPOS"
+              echo "Patched $THPOS"
+            }
+          fi
           # swift-nio SocketProtocols.swift: F_SETNOSIGPIPE is Darwin-only. FreeBSD uses global
           # SIGPIPE ignore (like Linux/OpenBSD) — add os(FreeBSD) to that branch.
           SOCKP=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SocketProtocols.swift" 2>/dev/null | head -1)
