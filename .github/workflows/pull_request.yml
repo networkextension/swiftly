@@ -212,6 +212,27 @@ jobs:
               echo "Patched $LOCKING"
             }
           fi
+          # NIOSSL LinuxCABundle.swift: add FreeBSD CA cert search paths.
+          # The file already has os(FreeBSD) in its #if guard but only lists Linux paths.
+          CABUNDLE=$(find .build/checkouts -path "*/NIOSSL/LinuxCABundle.swift" 2>/dev/null | head -1)
+          if [ -n "$CABUNDLE" ]; then
+            grep -qF '/usr/local/share/certs/ca-root-nss.crt' "$CABUNDLE" || {
+              awk '/\/etc\/pki\/tls\/certs\/ca-bundle.crt/{print; print "    \"/etc/ssl/cert.pem\",  // FreeBSD (base)"; print "    \"/usr/local/etc/ssl/cert.pem\",  // FreeBSD (ca_root_nss)"; print "    \"/usr/local/share/certs/ca-root-nss.crt\",  // FreeBSD (ca_root_nss)"; next}1' "$CABUNDLE" > /tmp/_cab.swift
+              mv /tmp/_cab.swift "$CABUNDLE"
+              echo "Patched $CABUNDLE"
+            }
+          fi
+          # NIOSSL SSLContext.swift: add FreeBSD branch to platformDefaultConfiguration.
+          # Linux branch calls .withCString on non-optional; FreeBSD must guard-let first
+          # because LinuxCABundle declares rootCAFilePath as String? (optional).
+          SSLCTX=$(find .build/checkouts -path "*/NIOSSL/SSLContext.swift" 2>/dev/null | head -1)
+          if [ -n "$SSLCTX" ]; then
+            grep -qF 'os(FreeBSD)' "$SSLCTX" || {
+              awk '/^        #elseif os\(Android\)$/ && !done{print "        #elseif os(FreeBSD)"; print "        guard let caFile = rootCAFilePath else { return }"; print "        let result = caFile.withCString { fp in"; print "            CNIOBoringSSL_SSL_CTX_load_verify_locations(context, fp, nil)"; print "        }"; print "        if result == 0 {"; print "            let errorStack = BoringSSLError.buildErrorStack()"; print "            throw BoringSSLError.unknownError(errorStack)"; print "        }"; done=1}{print}' "$SSLCTX" > /tmp/_ctx.swift
+              mv /tmp/_ctx.swift "$SSLCTX"
+              echo "Patched $SSLCTX"
+            }
+          fi
           swift build 2>&1
           swift test --filter SwiftlyTests 2>&1
           ENDSSH
@@ -369,6 +390,24 @@ jobs:
             grep -qF "os(FreeBSD) || os(OpenBSD)" "$LOCKING" || {
               sed -i '' 's/^  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)$/  #elseif os(FreeBSD) || os(OpenBSD)\n  typealias Primitive = pthread_mutex_t?\n  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)/' "$LOCKING"
               echo "Patched $LOCKING"
+            }
+          fi
+          # NIOSSL LinuxCABundle.swift: add FreeBSD CA cert search paths.
+          CABUNDLE=$(find .build/checkouts -path "*/NIOSSL/LinuxCABundle.swift" 2>/dev/null | head -1)
+          if [ -n "$CABUNDLE" ]; then
+            grep -qF '/usr/local/share/certs/ca-root-nss.crt' "$CABUNDLE" || {
+              awk '/\/etc\/pki\/tls\/certs\/ca-bundle.crt/{print; print "    \"/etc/ssl/cert.pem\",  // FreeBSD (base)"; print "    \"/usr/local/etc/ssl/cert.pem\",  // FreeBSD (ca_root_nss)"; print "    \"/usr/local/share/certs/ca-root-nss.crt\",  // FreeBSD (ca_root_nss)"; next}1' "$CABUNDLE" > /tmp/_cab.swift
+              mv /tmp/_cab.swift "$CABUNDLE"
+              echo "Patched $CABUNDLE"
+            }
+          fi
+          # NIOSSL SSLContext.swift: add FreeBSD branch to platformDefaultConfiguration.
+          SSLCTX=$(find .build/checkouts -path "*/NIOSSL/SSLContext.swift" 2>/dev/null | head -1)
+          if [ -n "$SSLCTX" ]; then
+            grep -qF 'os(FreeBSD)' "$SSLCTX" || {
+              awk '/^        #elseif os\(Android\)$/ && !done{print "        #elseif os(FreeBSD)"; print "        guard let caFile = rootCAFilePath else { return }"; print "        let result = caFile.withCString { fp in"; print "            CNIOBoringSSL_SSL_CTX_load_verify_locations(context, fp, nil)"; print "        }"; print "        if result == 0 {"; print "            let errorStack = BoringSSLError.buildErrorStack()"; print "            throw BoringSSLError.unknownError(errorStack)"; print "        }"; done=1}{print}' "$SSLCTX" > /tmp/_ctx.swift
+              mv /tmp/_ctx.swift "$SSLCTX"
+              echo "Patched $SSLCTX"
             }
           fi
           swift build 2>&1
