@@ -68,12 +68,15 @@ jobs:
           # be overwritten" when the branch updates between runs.
           _NIODIR_PRE=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
           if [ -n "$_NIODIR_PRE" ]; then
-            chmod -R u+w "$_NIODIR_PRE/.git" 2>/dev/null || true
+            chmod -R u+w "$_NIODIR_PRE" 2>/dev/null || true
             git config --global --add safe.directory "$(realpath "$_NIODIR_PRE")" 2>/dev/null || true
             git -C "$_NIODIR_PRE" reset --hard 2>/dev/null || true
             git -C "$_NIODIR_PRE" clean -ffd 2>/dev/null || true
           fi
           swift package resolve 2>&1
+          # SwiftPM on FreeBSD creates all checkout files as mode 444 (read-only).
+          # Make them writable before any git operations or source patching below.
+          chmod -R u+w .build/checkouts 2>/dev/null || true
           # swift-nio: switch checkout to FreeBSD-patched fork branch
           # networkextension/swift-nio freebsd-compat-2.93.0 is based on the 2.93.0 tag
           # and carries all FreeBSD compatibility fixes as proper source edits.
