@@ -124,7 +124,8 @@ jobs:
           fi
           # CNIOBoringSSL umbrella header: arpa/inet.h is not included on FreeBSD, so
           # inet_ntop/inet_pton are invisible to Swift code (e.g. NIOSSL SubjectAlternativeName.swift).
-          CNIO_HDR=$(find .build/checkouts -path "*/CNIOBoringSSL/include/CNIOBoringSSL/CNIOBoringSSL.h" 2>/dev/null | head -1)
+          # Header lives at swift-nio-ssl/Sources/CNIOBoringSSL/include/CNIOBoringSSL.h (no subdir).
+          CNIO_HDR=$(find .build/checkouts -path "*/CNIOBoringSSL/include/CNIOBoringSSL.h" 2>/dev/null | head -1)
           if [ -n "$CNIO_HDR" ]; then
             grep -qF 'FreeBSD-arpa-inet' "$CNIO_HDR" || {
               printf '\n/* FreeBSD-arpa-inet */\n#if defined(__FreeBSD__)\n#include <arpa/inet.h>\n#endif\n' >> "$CNIO_HDR"
