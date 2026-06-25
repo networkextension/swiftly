@@ -281,6 +281,15 @@ jobs:
               echo "Patched $KQSEL (EVFILT_EXCEPT)"
             }
           fi
+          # swift-nio SocketProtocols.swift: F_SETNOSIGPIPE is Darwin-only. FreeBSD uses global
+          # SIGPIPE ignore (like Linux/OpenBSD) — add os(FreeBSD) to that branch.
+          SOCKP=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SocketProtocols.swift" 2>/dev/null | head -1)
+          if [ -n "$SOCKP" ]; then
+            grep -qF 'FreeBSD-sigpipe-fix' "$SOCKP" || {
+              sed -i '' 's/#if os(Linux) || os(Android) || os(OpenBSD)$/#if os(Linux) || os(Android) || os(OpenBSD) || os(FreeBSD) \/* FreeBSD-sigpipe-fix *\//' "$SOCKP"
+              echo "Patched $SOCKP"
+            }
+          fi
           # swift-nio Interfaces.swift: dstaddr/broadaddr getters missing FreeBSD
           IFACE=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/Interfaces.swift" 2>/dev/null | head -1)
           if [ -n "$IFACE" ]; then
