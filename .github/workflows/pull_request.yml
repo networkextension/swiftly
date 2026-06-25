@@ -60,7 +60,7 @@ jobs:
         run: |
           ssh -F "$HOME/.ssh/config" freebsd-ci /bin/sh << 'ENDSSH'
           set -e
-          # Kill any swift processes left over from a previous cancelled/timed-out run.
+          # Stop any swift processes left over from a previous cancelled/timed-out run.
           # This prevents concurrent build/test from corrupting the shared .build directory.
           pkill -u swift -x swift-test 2>/dev/null || true
           pkill -u swift -x swift-build 2>/dev/null || true
@@ -282,8 +282,8 @@ jobs:
           ssh -F "$HOME/.ssh/config" freebsd-ci-2 /bin/sh << 'ENDSSH'
           set -e
           # Ensure gnupg is installed — tests use gpg to sign mock toolchain archives.
-          which gpg >/dev/null 2>&1 || sudo pkg install -y gnupg 2>&1 || true
-          # Kill any swift processes left over from a previous cancelled/timed-out run.
+          which gpg >/dev/null 2>&1 || doas pkg install -y gnupg 2>&1 || true
+          # Stop any swift processes left over from a previous cancelled/timed-out run.
           pkill -u swift -x swift-test 2>/dev/null || true
           pkill -u swift -x swift-build 2>/dev/null || true
           pkill -u swift -f "swift-package resolve" 2>/dev/null || true
