@@ -68,6 +68,7 @@ jobs:
           # and carries all FreeBSD compatibility fixes as proper source edits.
           NIODIR=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
           if [ -n "$NIODIR" ]; then
+            git -C "$NIODIR" checkout HEAD -- . 2>/dev/null || true
             git -C "$NIODIR" remote add networkextension https://github.com/networkextension/swift-nio.git 2>/dev/null || true
             git -C "$NIODIR" fetch networkextension freebsd-compat-2.93.0
             git -C "$NIODIR" checkout networkextension/freebsd-compat-2.93.0
