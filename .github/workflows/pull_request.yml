@@ -225,7 +225,7 @@ PATCH
             }
           fi
           swift build 2>&1
-          swift test --filter SwiftlyTests --disable-swift-testing 2>&1
+          swift test --filter SwiftlyTests 2>&1
           ENDSSH
         timeout-minutes: 60
 
@@ -396,7 +396,7 @@ PATCH
             }
           fi
           swift build 2>&1
-          swift test --filter SwiftlyTests --disable-swift-testing 2>&1
+          swift test --filter SwiftlyTests 2>&1
           ENDSSH
         timeout-minutes: 90
 
