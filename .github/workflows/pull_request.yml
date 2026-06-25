@@ -63,60 +63,15 @@ jobs:
           . "$HOME/swift632-env.sh"
           cd "$HOME/ci/swiftly"
           swift package resolve 2>&1
-          # CNIOLinux: ALL content in shim.c is inside #ifdef __linux__. The header has two
-          # #ifdef __linux__ blocks; the second one (after liburing_nio.h include) wraps ALL
-          # the typedef and function declarations through line 180. Fix: inject a FreeBSD
-          # section AFTER #include "liburing_nio.h" (between the two linux blocks, outside
-          # both), providing static inline implementations of all needed functions.
-          # Reset first to prevent double-patch from board retaining modified files across CI runs.
-          CNIOLINUX=$(find .build/checkouts -path "*/CNIOLinux/include/CNIOLinux.h" 2>/dev/null | head -1)
-          if [ -n "$CNIOLINUX" ]; then
-            CNIODIR=$(dirname "$(dirname "$(dirname "$(dirname "$CNIOLINUX")")")")
-            git -C "$CNIODIR" checkout HEAD -- Sources/CNIOLinux/include/CNIOLinux.h
-            awk '
-            /^#include "liburing_nio.h"$/ && !freebsd_done {
-              print
-              print "#if defined(__FreeBSD__) /* FreeBSD-cniolinux-fix */"
-              print "#include <sys/socket.h>"
-              print "#include <netinet/in.h>"
-              print "#include <pthread.h>"
-              print "#include <pthread_np.h>"
-              print "typedef struct { struct msghdr msg_hdr; unsigned int msg_len; } CNIOLinux_mmsghdr;"
-              print "typedef struct { struct in6_addr ipi6_addr; unsigned int ipi6_ifindex; } CNIOLinux_in6_pktinfo;"
-              print "static inline int CNIOLinux_sendmmsg(int s,CNIOLinux_mmsghdr *v,unsigned int n,int f){return sendmmsg(s,(struct mmsghdr*)v,n,f);}"
-              print "static inline int CNIOLinux_recvmmsg(int s,CNIOLinux_mmsghdr *v,unsigned int n,int f,struct timespec *t){return recvmmsg(s,(struct mmsghdr*)v,n,f,t);}"
-              print "static inline struct cmsghdr *CNIOLinux_CMSG_FIRSTHDR(const struct msghdr *m){return CMSG_FIRSTHDR(m);}"
-              print "static inline struct cmsghdr *CNIOLinux_CMSG_NXTHDR(struct msghdr *m,struct cmsghdr *c){return CMSG_NXTHDR(m,c);}"
-              print "static inline const void *CNIOLinux_CMSG_DATA(const struct cmsghdr *c){return CMSG_DATA(c);}"
-              print "static inline void *CNIOLinux_CMSG_DATA_MUTABLE(struct cmsghdr *c){return CMSG_DATA(c);}"
-              print "static inline size_t CNIOLinux_CMSG_LEN(size_t n){return CMSG_LEN(n);}"
-              print "static inline size_t CNIOLinux_CMSG_SPACE(size_t n){return CMSG_SPACE(n);}"
-              print "static inline int CNIOLinux_pthread_setname_np(pthread_t t,const char *n){pthread_set_name_np(t,n);return 0;}"
-              print "static inline int CNIOLinux_pthread_getname_np(pthread_t t,char *n,size_t l){pthread_get_name_np(t,n,l);return 0;}"
-              print "static inline int CNIOLinux_accept4(int s,struct sockaddr *a,socklen_t *l,int f){return accept4(s,a,l,f);}"
-              print "#ifndef IPTOS_ECN_NOT_ECT"
-              print "#define IPTOS_ECN_NOT_ECT 0x00"
-              print "#define IPTOS_ECN_MASK    0x03"
-              print "#define IPTOS_ECN_ECT0    0x02"
-              print "#define IPTOS_ECN_ECT1    0x01"
-              print "#define IPTOS_ECN_CE      0x03"
-              print "#endif"
-              print "#ifndef IP_PKTINFO"
-              print "#define IP_PKTINFO (-1)"
-              print "#endif"
-              print "#ifndef IPV6_RECVPKTINFO"
-              print "#define IPV6_RECVPKTINFO 36"
-              print "#endif"
-              print "#ifndef IPV6_PKTINFO"
-              print "#define IPV6_PKTINFO 46"
-              print "#endif"
-              print "#endif /* __FreeBSD__ */"
-              freebsd_done=1
-              next
-            }
-            1' "$CNIOLINUX" > /tmp/_cniolinux.h
-            mv /tmp/_cniolinux.h "$CNIOLINUX"
-            echo "Patched $CNIOLINUX"
+          # swift-nio: switch checkout to FreeBSD-patched fork branch
+          # networkextension/swift-nio freebsd-compat-2.93.0 is based on the 2.93.0 tag
+          # and carries all FreeBSD compatibility fixes as proper source edits.
+          NIODIR=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
+          if [ -n "$NIODIR" ]; then
+            git -C "$NIODIR" remote add networkextension https://github.com/networkextension/swift-nio.git 2>/dev/null || true
+            git -C "$NIODIR" fetch networkextension freebsd-compat-2.93.0
+            git -C "$NIODIR" checkout networkextension/freebsd-compat-2.93.0
+            echo "Switched swift-nio to networkextension/freebsd-compat-2.93.0"
           fi
           # CNIOBoringSSL: FreeBSD sys/time.h guards gettimeofday behind __XSI_VISIBLE,
           # which is 0 unless _XOPEN_SOURCE>=500. BoringSSL doesn't define it.
@@ -152,8 +107,10 @@ jobs:
               echo "Patched $GE"
             }
           fi
-          # All NIO-style lock files: FreeBSD pthread types are opaque pointers like OpenBSD
-          find .build/checkouts \( -name "Locks.swift" -o -name "NIOLock.swift" \) 2>/dev/null | while read LOCKS; do
+          # Other NIO-style lock files (NIOLock.swift etc, not swift-nio itself):
+          # FreeBSD pthread types are opaque pointers like OpenBSD
+          find .build/checkouts \( -name "Locks.swift" -o -name "NIOLock.swift" \) \
+            ! -path "*/swift-nio/*" 2>/dev/null | while read LOCKS; do
             grep -qF "pthread" "$LOCKS" || continue
             grep -qF "os(OpenBSD) || os(FreeBSD)" "$LOCKS" || \
               sed -i '' 's/os(OpenBSD)/os(OpenBSD) || os(FreeBSD)/g' "$LOCKS"
@@ -194,230 +151,6 @@ jobs:
             grep -qF '!os(FreeBSD) && !os(OpenBSD)) || canImport(Bionic)' "$SUBTHREAD" || {
               sed -i '' 's/#if canImport(Glibc) || canImport(Bionic)/#if (canImport(Glibc) \&\& !os(FreeBSD) \&\& !os(OpenBSD)) || canImport(Bionic)/g' "$SUBTHREAD"
               echo "Patched $SUBTHREAD (pthread_t? fix)"
-            }
-          fi
-          # swift-nio lock.swift: has os(OpenBSD) already — add || os(FreeBSD) to all guards
-          NIOLOCK=$(find .build/checkouts -path "*/swift-nio/Sources/NIOConcurrencyHelpers/lock.swift" 2>/dev/null | head -1)
-          if [ -n "$NIOLOCK" ]; then
-            grep -qF "os(OpenBSD) || os(FreeBSD)" "$NIOLOCK" || {
-              sed -i '' 's/os(OpenBSD)/os(OpenBSD) || os(FreeBSD)/g' "$NIOLOCK"
-              echo "Patched $NIOLOCK"
-            }
-          fi
-          # swift-nio BSDSocketAPI.swift: #else #error — add #elseif os(FreeBSD) with Glibc.
-          # FreeBSD arpa/inet.h renames inet_ntop→__inet_ntop via macro when __BSD_VISIBLE=1,
-          # so Swift sees __inet_ntop/__inet_pton instead of the POSIX names.
-          BSD=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/BSDSocketAPI.swift" 2>/dev/null | head -1)
-          if [ -n "$BSD" ]; then
-            grep -qF 'FreeBSD-bsdsocket-fix' "$BSD" || {
-              awk '/^#elseif canImport\(Darwin\)$/ && !done {
-                print "#elseif os(FreeBSD)"
-                print "/* FreeBSD-bsdsocket-fix */"
-                print "@preconcurrency import Glibc"
-                print ""
-                print "private let sysInet_ntop:"
-                print "    @convention(c) (CInt, UnsafeRawPointer?, UnsafeMutablePointer<CChar>?, socklen_t) -> UnsafePointer<CChar>? ="
-                print "        __inet_ntop"
-                print "private let sysInet_pton: @convention(c) (CInt, UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> CInt = __inet_pton"
-                done=1
-              }
-              1' "$BSD" > /tmp/_bsd.swift
-              mv /tmp/_bsd.swift "$BSD"
-              echo "Patched $BSD"
-            }
-          fi
-          # swift-nio SocketOptionProvider.swift: #else #error — add #elseif os(FreeBSD) with Glibc
-          SOP=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/SocketOptionProvider.swift" 2>/dev/null | head -1)
-          if [ -n "$SOP" ]; then
-            grep -qF 'FreeBSD-sockopt-fix' "$SOP" || {
-              awk '/^#elseif os\(Windows\)$/ && !done {
-                print "#elseif os(FreeBSD)"
-                print "/* FreeBSD-sockopt-fix */"
-                print "@preconcurrency import Glibc"
-                done=1
-              }
-              1' "$SOP" > /tmp/_sop.swift
-              mv /tmp/_sop.swift "$SOP"
-              echo "Patched $SOP"
-            }
-          fi
-          # swift-nio SelectorGeneric.swift: FreeBSD uses kqueue like Darwin/OpenBSD
-          SEL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SelectorGeneric.swift" 2>/dev/null | head -1)
-          if [ -n "$SEL" ]; then
-            grep -qF 'os(FreeBSD)' "$SEL" || {
-              sed -i '' 's/canImport(Darwin) || os(OpenBSD)/canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/g' "$SEL"
-              echo "Patched $SEL"
-            }
-          fi
-          # swift-nio SelectorKqueue.swift: entire file gated on Darwin||OpenBSD; FreeBSD has kqueue.
-          # Also EVFILT_EXCEPT is Darwin/OpenBSD-only; FreeBSD kqueue does not have it.
-          # Fix 1: add os(FreeBSD) to file guard.
-          # Fix 2: split the filter loop — strip .except from the main loop, add a
-          #        !os(FreeBSD)-guarded second loop for EVFILT_EXCEPT. Swift 6.3.2 on the
-          #        board rejects #if inside array literals, so two separate loops is required.
-          #        Also replace fallthrough with inline readEOF handling on FreeBSD.
-          # Always reset to HEAD first so re-runs start from a pristine file.
-          KQSEL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SelectorKqueue.swift" 2>/dev/null | head -1)
-          if [ -n "$KQSEL" ]; then
-            NIODIR=$(dirname "$(dirname "$(dirname "$KQSEL")")")
-            git -C "$NIODIR" checkout HEAD -- Sources/NIOPosix/SelectorKqueue.swift
-            sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$KQSEL"
-            echo "Patched $KQSEL (file guard)"
-            awk '
-            /[(]KQueueEventFilterSet[.]read, EVFILT_READ[)], [(][.]write, EVFILT_WRITE[)], [(][.]except, EVFILT_EXCEPT[)],/ && !loop_done {
-              sub(", [(][.]except, EVFILT_EXCEPT[)],", ",")
-              print
-              loop_done=1
-              next
-            }
-            loop_done && !after_done && /^        }$/ {
-              print
-              print "        #if !os(FreeBSD) /* FreeBSD-evfilt-fix */"
-              print "        for (event, filter) in [(KQueueEventFilterSet.except, EVFILT_EXCEPT)] {"
-              print "            if let flags = calculateKQueueChange(event: event) {"
-              print "                kevents.appendEvent("
-              print "                    fileDescriptor: fileDescriptor,"
-              print "                    filter: filter,"
-              print "                    flags: flags,"
-              print "                    registrationID: registrationID"
-              print "                )"
-              print "            }"
-              print "        }"
-              print "        #endif"
-              after_done=1
-              next
-            }
-            /fallthrough.*EVFILT_READ.*EV_EOF/ && !fall_done {
-              print "            #if !os(FreeBSD)"
-              print
-              print "            #else"
-              print "                if Int32(ev.flags) & EV_EOF != 0 && registration.interested.contains(.readEOF) {"
-              print "                    selectorEvent.formUnion(.readEOF)"
-              print "                }"
-              print "            #endif"
-              fall_done=1
-              next
-            }
-            /^            case EVFILT_EXCEPT:$/ && !case_done {
-              print "            #if !os(FreeBSD)"
-              print
-              case_done=1
-              next
-            }
-            case_done && /^            case EVFILT_WRITE:$/ {
-              print "            #endif"
-              case_done=0
-            }
-            1' "$KQSEL" > /tmp/_kqsel.swift
-            mv /tmp/_kqsel.swift "$KQSEL"
-            echo "Patched $KQSEL (EVFILT_EXCEPT two-loop)"
-          fi
-          # swift-nio ThreadPosix.swift: FreeBSD not in any typedef branch, leaving
-          # ThreadDestructor/sys_pthread_{get,set}name_np undefined. Fix:
-          # (1) add os(FreeBSD) to Linux typedef block (uses CNIOLinux wrappers already patched),
-          # (2) add os(FreeBSD) to OpenBSD sysPthread_create path (pthread_attr_t is a pointer on FreeBSD).
-          THPOS=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/ThreadPosix.swift" 2>/dev/null | head -1)
-          if [ -n "$THPOS" ]; then
-            grep -qF 'FreeBSD-thread-fix' "$THPOS" || {
-              sed -i '' 's/#if os(Linux) || os(Android)$/#if os(Linux) || os(Android) || os(FreeBSD) \/* FreeBSD-thread-fix *\//' "$THPOS"
-              sed -i '' 's/#elseif os(OpenBSD)$/#elseif os(OpenBSD) || os(FreeBSD)/' "$THPOS"
-              echo "Patched $THPOS"
-            }
-          fi
-          # swift-nio SocketProtocols.swift: F_SETNOSIGPIPE is Darwin-only. FreeBSD uses global
-          # SIGPIPE ignore (like Linux/OpenBSD) — add os(FreeBSD) to that branch.
-          SOCKP=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/SocketProtocols.swift" 2>/dev/null | head -1)
-          if [ -n "$SOCKP" ]; then
-            grep -qF 'FreeBSD-sigpipe-fix' "$SOCKP" || {
-              sed -i '' 's/#if os(Linux) || os(Android) || os(OpenBSD)$/#if os(Linux) || os(Android) || os(OpenBSD) || os(FreeBSD) \/* FreeBSD-sigpipe-fix *\//' "$SOCKP"
-              echo "Patched $SOCKP"
-            }
-          fi
-          # swift-nio Interfaces.swift: dstaddr/broadaddr getters missing FreeBSD
-          IFACE=$(find .build/checkouts -path "*/swift-nio/Sources/NIOCore/Interfaces.swift" 2>/dev/null | head -1)
-          if [ -n "$IFACE" ]; then
-            grep -qF 'os(FreeBSD)' "$IFACE" || {
-              sed -i '' 's/canImport(Darwin) || os(OpenBSD)/canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/g' "$IFACE"
-              echo "Patched $IFACE"
-            }
-          fi
-          # swift-nio System.swift: multiple guards missing FreeBSD for kqueue + syscalls + fstat.
-          # Always reset to pristine HEAD before patching — board retains modified files across
-          # CI runs (swift package resolve doesn't reset them), causing double-patch corruption.
-          SYSF=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/System.swift" 2>/dev/null | head -1)
-          if [ -n "$SYSF" ]; then
-            NIODIR=$(dirname "$(dirname "$(dirname "$SYSF")")")
-            git -C "$NIODIR" checkout HEAD -- Sources/NIOPosix/System.swift
-            sed -i '' 's/#if os(Linux) || os(Android) || canImport(Darwin) || os(OpenBSD)$/#if os(Linux) || os(Android) || os(FreeBSD) || canImport(Darwin) || os(OpenBSD)/' "$SYSF"
-            sed -i '' 's/#elseif os(Linux) || os(Android) || os(OpenBSD)$/#elseif os(Linux) || os(Android) || os(FreeBSD) || os(OpenBSD)/' "$SYSF"
-            sed -i '' 's/#if canImport(Darwin) || os(OpenBSD)$/#if canImport(Darwin) || os(OpenBSD) || os(FreeBSD)/' "$SYSF"
-            awk '/^internal typealias in6_pktinfo = CNIOLinux_in6_pktinfo$/ {
-              print "/* FreeBSD-in6pktinfo-fix */"
-              print "#if !os(FreeBSD)"
-              print; print "#endif"; next}
-            /^private let sysRecvMmsg = CNIOLinux_recvmmsg$/ && !fbsd {
-              print; print "#elseif os(FreeBSD)"
-              print "private let sysKevent = kevent"
-              print "private let sysSendMmsg = CNIOLinux_sendmmsg"
-              print "private let sysRecvMmsg = CNIOLinux_recvmmsg"
-              fbsd=1; next}
-            /^internal typealias kevent_timespec = CNIOOpenBSD\.timespec$/ {
-              print; print "#elseif os(FreeBSD)"
-              print "internal typealias kevent_timespec = Glibc.timespec"
-              next}
-            /^            CNIOOpenBSD\.kqueue\(\)$/ {
-              print; print "            #elseif os(FreeBSD)"
-              print "            Glibc.kqueue()"
-              next}
-            /^    static let UIO_MAXIOV: Int = Int[(]Glibc[.]UIO_MAXIOV[)]$/ && !uio_done {
-              print "    #if os(FreeBSD) /* FreeBSD-sys-consts-fix */"
-              print "    static let UIO_MAXIOV: Int = 1024"
-              print "    @usableFromInline"
-              print "    static let SHUT_RD: CInt = 0"
-              print "    @usableFromInline"
-              print "    static let SHUT_WR: CInt = 1"
-              print "    @usableFromInline"
-              print "    static let SHUT_RDWR: CInt = 2"
-              print "    #else"
-              print
-              uio_done=1
-              next}
-            uio_done && !uio_end && /^    #elseif canImport[(]Musl[)]$/ {
-              print "    #endif"
-              print
-              uio_end=1
-              next}
-            /let result: ssize_t = Glibc[.]sendfile[(]descriptor, fd, [&]off, count[)]/ && !sf_done {
-              print "                #if !os(FreeBSD) /* FreeBSD-sendfile-fix */"
-              print
-              print "                #else"
-              print "                var _sbytes: off_t = 0"
-              print "                let _r: CInt = Glibc.sendfile(fd, descriptor, offset, count, nil, &_sbytes, 0)"
-              print "                let result: ssize_t = _r >= 0 ? ssize_t(_sbytes) : -1"
-              print "                #endif"
-              sf_done=1
-              next}
-            1' "$SYSF" > /tmp/_sys.swift
-            mv /tmp/_sys.swift "$SYSF"
-            echo "Patched $SYSF"
-          fi
-          # swift-nio ControlMessage.swift: in_pktinfo is Linux-only (struct from linux/in.h).
-          # FreeBSD uses IP_RECVDSTADDR instead; exclude FreeBSD from in_pktinfo usage.
-          # Also reset to pristine HEAD first for the same reason as System.swift above.
-          CTRL=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/ControlMessage.swift" 2>/dev/null | head -1)
-          if [ -n "$CTRL" ]; then
-            NIODIR=$(dirname "$(dirname "$(dirname "$CTRL")")")
-            git -C "$NIODIR" checkout HEAD -- Sources/NIOPosix/ControlMessage.swift
-            sed -i '' 's/#if !os(OpenBSD)$/#if !os(OpenBSD) \&\& !os(FreeBSD) \/* FreeBSD-inpktinfo-fix *\//' "$CTRL"
-            echo "Patched $CTRL"
-          fi
-          # swift-nio NonBlockingFileIO.swift: uses d_fileno (OpenBSD) vs d_ino (others).
-          # FreeBSD also uses d_fileno, so add os(FreeBSD) to the OpenBSD condition.
-          NBFIO=$(find .build/checkouts -path "*/swift-nio/Sources/NIOPosix/NonBlockingFileIO.swift" 2>/dev/null | head -1)
-          if [ -n "$NBFIO" ]; then
-            grep -qF 'FreeBSD-dfileno-fix' "$NBFIO" || {
-              sed -i '' 's/#if os(OpenBSD)$/#if os(OpenBSD) || os(FreeBSD) \/* FreeBSD-dfileno-fix *\//' "$NBFIO"
-              echo "Patched $NBFIO"
             }
           fi
           # swift-service-lifecycle Lock.swift: only #if os(Windows)/#else, no FreeBSD case.
