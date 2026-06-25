@@ -131,7 +131,7 @@ jobs:
           CNIO_HDR=$(find .build/checkouts -path "*/CNIOBoringSSL/include/CNIOBoringSSL.h" 2>/dev/null | head -1)
           if [ -n "$CNIO_HDR" ]; then
             grep -qF 'FreeBSD-arpa-inet' "$CNIO_HDR" || {
-              printf '\n/* FreeBSD-arpa-inet */\n#if defined(__FreeBSD__)\n#include <arpa/inet.h>\n#endif\n' >> "$CNIO_HDR"
+              printf '\n/* FreeBSD-arpa-inet: inet_ntop/inet_pton are #defined to __inet_ntop/__inet_pton\n * in <arpa/inet.h> on FreeBSD, hiding them from Swift'\''s Clang importer.\n * Include the header, undef the macros, then re-declare the public names.\n * Both symbols (inet_ntop and __inet_ntop) are exported by libc at the same address. */\n#if defined(__FreeBSD__)\n#include <arpa/inet.h>\n#undef inet_ntop\n#undef inet_pton\nconst char *inet_ntop(int, const void * __restrict, char * __restrict, unsigned int);\nint inet_pton(int, const char * __restrict, void * __restrict);\n#endif\n' >> "$CNIO_HDR"
               echo "Patched $CNIO_HDR"
             }
           fi
@@ -299,7 +299,7 @@ jobs:
           CNIO_HDR=$(find .build/checkouts -path "*/CNIOBoringSSL/include/CNIOBoringSSL.h" 2>/dev/null | head -1)
           if [ -n "$CNIO_HDR" ]; then
             grep -qF 'FreeBSD-arpa-inet' "$CNIO_HDR" || {
-              printf '\n/* FreeBSD-arpa-inet */\n#if defined(__FreeBSD__)\n#include <arpa/inet.h>\n#endif\n' >> "$CNIO_HDR"
+              printf '\n/* FreeBSD-arpa-inet: inet_ntop/inet_pton are #defined to __inet_ntop/__inet_pton\n * in <arpa/inet.h> on FreeBSD, hiding them from Swift'\''s Clang importer.\n * Include the header, undef the macros, then re-declare the public names.\n * Both symbols (inet_ntop and __inet_ntop) are exported by libc at the same address. */\n#if defined(__FreeBSD__)\n#include <arpa/inet.h>\n#undef inet_ntop\n#undef inet_pton\nconst char *inet_ntop(int, const void * __restrict, char * __restrict, unsigned int);\nint inet_pton(int, const char * __restrict, void * __restrict);\n#endif\n' >> "$CNIO_HDR"
               echo "Patched $CNIO_HDR"
             }
           fi
@@ -362,7 +362,7 @@ jobs:
           swift build 2>&1
           swift test --filter SwiftlyTests 2>&1
           ENDSSH
-        timeout-minutes: 60
+        timeout-minutes: 90
 
   macos-tests-selfhosted:
     name: Test (Self Hosted) / macOS Tahoe ARM64
