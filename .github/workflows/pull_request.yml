@@ -211,6 +211,159 @@ jobs:
           ENDSSH
         timeout-minutes: 60
 
+  freebsd-aarch64-14-tests:
+    name: Test / FreeBSD 14.4 aarch64
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'networkextension/swiftly' || github.repository == 'swiftlang/swiftly' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+          sudo apt-get update && sudo apt-get install -y cloudflared
+      - name: Set up SSH key and known hosts
+        env:
+          FREEBSD_SSH_KEY_2: ${{ secrets.FREEBSD_SSH_KEY_2 }}
+          FREEBSD_CF_HOSTNAME_2: ${{ secrets.FREEBSD_CF_HOSTNAME_2 }}
+        run: |
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$FREEBSD_SSH_KEY_2" > "$HOME/.ssh/freebsd_ci_key_2"
+          chmod 600 "$HOME/.ssh/freebsd_ci_key_2"
+          printf '%s ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIQes9chPEJ0dX9K07yo8gtd8JzNw9mrPn7KwKC46Jje\n' \
+            "$FREEBSD_CF_HOSTNAME_2" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          printf 'Host freebsd-ci-2\n  HostName %s\n  User swift\n  IdentityFile %s/.ssh/freebsd_ci_key_2\n  ProxyCommand cloudflared access tcp --hostname %%h\n' \
+            "$FREEBSD_CF_HOSTNAME_2" "$HOME" > "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+      - name: Sync source to board
+        run: |
+          ssh -F "$HOME/.ssh/config" freebsd-ci-2 'mkdir -p /home/swift/ci/swiftly'
+          rsync -avz --delete \
+            --exclude='.build' --exclude='.git' \
+            -e "ssh -F $HOME/.ssh/config" \
+            . freebsd-ci-2:/home/swift/ci/swiftly/
+      - name: Build and Test on FreeBSD 14.4 aarch64
+        run: |
+          ssh -F "$HOME/.ssh/config" freebsd-ci-2 /bin/sh << 'ENDSSH'
+          set -e
+          . "$HOME/swift632-env.sh"
+          cd "$HOME/ci/swiftly"
+          _NIODIR_PRE=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
+          if [ -n "$_NIODIR_PRE" ]; then
+            chmod -R u+w "$_NIODIR_PRE" 2>/dev/null || true
+            git config --global --add safe.directory "$(realpath "$_NIODIR_PRE")" 2>/dev/null || true
+            git -C "$_NIODIR_PRE" reset --hard 2>/dev/null || true
+            git -C "$_NIODIR_PRE" clean -ffd 2>/dev/null || true
+          fi
+          swift package resolve 2>&1
+          chmod -R u+w .build/checkouts 2>/dev/null || true
+          NIODIR=$(find .build/checkouts -maxdepth 1 -name "swift-nio" -type d 2>/dev/null | head -1)
+          if [ -n "$NIODIR" ]; then
+            chmod -R u+w "$NIODIR/.git" 2>/dev/null || true
+            git config --global --add safe.directory "$(realpath "$NIODIR")" 2>/dev/null || true
+            git -C "$NIODIR" reset --hard 2>/dev/null || true
+            git -C "$NIODIR" clean -ffd 2>/dev/null || true
+            git -C "$NIODIR" remote add networkextension https://github.com/networkextension/swift-nio.git 2>/dev/null || true
+            git -C "$NIODIR" fetch networkextension freebsd-compat-2.93.0
+            git -C "$NIODIR" checkout networkextension/freebsd-compat-2.93.0
+            echo "Switched swift-nio to networkextension/freebsd-compat-2.93.0"
+          fi
+          SSL_LIB=$(find .build/checkouts -path "*/CNIOBoringSSL*/ssl/ssl_lib.cc" 2>/dev/null | head -1)
+          if [ -n "$SSL_LIB" ]; then
+            grep -qF 'FreeBSD-gettimeofday-xsi' "$SSL_LIB" || {
+              grep -q 'FreeBSD-gettimeofday' "$SSL_LIB" && sed -i '' '1,2d' "$SSL_LIB"
+              awk 'NR==1{print "/* FreeBSD-gettimeofday-xsi */\n#ifndef _XOPEN_SOURCE\n#define _XOPEN_SOURCE 600\n#endif\n#include <sys/time.h>"}1' "$SSL_LIB" > /tmp/_ssl.cc
+              mv /tmp/_ssl.cc "$SSL_LIB"
+              echo "Patched $SSL_LIB"
+            }
+          fi
+          AHC=$(find .build/checkouts -path "*/CAsyncHTTPClient/CAsyncHTTPClient.c" 2>/dev/null | head -1)
+          if [ -n "$AHC" ]; then
+            grep -qF 'FreeBSD-strptime-fix' "$AHC" || {
+              awk 'NR==1{print "/* FreeBSD-strptime-fix */\n#if defined(__FreeBSD__)\n#include <locale.h>\nextern char *strptime_l(const char *, const char *, struct tm *, locale_t);\n#endif"}1' \
+                "$AHC" > /tmp/_ahc.c
+              mv /tmp/_ahc.c "$AHC"
+              echo "Patched $AHC"
+            }
+          fi
+          GE=$(find .build/checkouts -path "*/CNIOBoringSSL*/crypto/rand/getentropy.cc" 2>/dev/null | head -1)
+          if [ -n "$GE" ]; then
+            grep -qF 'FreeBSD-getentropy-fix' "$GE" || {
+              awk 'NR==1{print "/* FreeBSD-getentropy-fix */\n#if defined(__FreeBSD__)\nextern \"C\" int getentropy(void*, __SIZE_TYPE__);\n#endif"}1' "$GE" > /tmp/_ge.cc
+              mv /tmp/_ge.cc "$GE"
+              echo "Patched $GE"
+            }
+          fi
+          CNIO_HDR=$(find .build/checkouts -path "*/CNIOBoringSSL/include/CNIOBoringSSL.h" 2>/dev/null | head -1)
+          if [ -n "$CNIO_HDR" ]; then
+            grep -qF 'FreeBSD-arpa-inet' "$CNIO_HDR" || {
+              printf '\n/* FreeBSD-arpa-inet */\n#if defined(__FreeBSD__)\n#include <arpa/inet.h>\n#endif\n' >> "$CNIO_HDR"
+              echo "Patched $CNIO_HDR"
+            }
+          fi
+          find .build/checkouts \( -name "Locks.swift" -o -name "NIOLock.swift" \) \
+            ! -path "*/swift-nio/*" 2>/dev/null | while read LOCKS; do
+            grep -qF "pthread" "$LOCKS" || continue
+            grep -qF "os(OpenBSD) || os(FreeBSD)" "$LOCKS" || \
+              sed -i '' 's/os(OpenBSD)/os(OpenBSD) || os(FreeBSD)/g' "$LOCKS"
+            grep -qF "pthread_rwlock_t?>" "$LOCKS" || \
+              sed -i '' 's/pthread_rwlock_t> =/pthread_rwlock_t?> =/' "$LOCKS"
+            grep -qF "LockPrimitive = pthread_mutex_t?" "$LOCKS" || \
+              sed -i '' 's/typealias LockPrimitive = pthread_mutex_t$/typealias LockPrimitive = pthread_mutex_t?/' "$LOCKS"
+            grep -qF "pthread_mutexattr_t(bitPattern:" "$LOCKS" || \
+              sed -i '' 's/var attr = pthread_mutexattr_t()/var attr: pthread_mutexattr_t? = pthread_mutexattr_t(bitPattern: 0)/' "$LOCKS"
+            echo "Patched $LOCKS"
+          done
+          LOGGING=$(find .build/checkouts -path "*/swift-log*/Logging.swift" 2>/dev/null | head -1)
+          if [ -n "$LOGGING" ]; then
+            grep -qF "Glibc.stdout!" "$LOGGING" && \
+              sed -i '' 's/Glibc\.stdout!/Glibc.stdout/g; s/Glibc\.stderr!/Glibc.stderr/g' "$LOGGING" && \
+              echo "Patched $LOGGING"
+          fi
+          SUBTHREAD=$(find .build/checkouts -path "*/swift-subprocess*/Thread.swift" 2>/dev/null | head -1)
+          if [ -n "$SUBTHREAD" ]; then
+            grep -qF "pthread_mutex_t?" "$SUBTHREAD" || {
+              awk '/^private typealias MutexType = pthread_mutex_t$/{
+                print "#if os(FreeBSD) || os(OpenBSD)\nprivate typealias MutexType = pthread_mutex_t?\nprivate typealias ConditionType = pthread_cond_t?\n#else\n" $0; next}
+              /^private typealias ConditionType = pthread_cond_t$/{print $0 "\n#endif"; next}1' \
+                "$SUBTHREAD" > /tmp/_th.swift
+              mv /tmp/_th.swift "$SUBTHREAD"
+              echo "Patched $SUBTHREAD (typealiases)"
+            }
+            awk 'prev == "    var thread = pthread_t()" && /^#endif$/{next} {prev=$0; print}' \
+              "$SUBTHREAD" > /tmp/_th.swift && mv /tmp/_th.swift "$SUBTHREAD"
+            grep -qF '!os(FreeBSD) && !os(OpenBSD)) || canImport(Bionic)' "$SUBTHREAD" || {
+              sed -i '' 's/#if canImport(Glibc) || canImport(Bionic)/#if (canImport(Glibc) \&\& !os(FreeBSD) \&\& !os(OpenBSD)) || canImport(Bionic)/g' "$SUBTHREAD"
+              echo "Patched $SUBTHREAD (pthread_t? fix)"
+            }
+          fi
+          SVC=$(find .build/checkouts -path "*/swift-service-lifecycle*/ConcurrencyHelpers/Lock.swift" 2>/dev/null | head -1)
+          if [ -n "$SVC" ]; then
+            grep -qF "LockPrimitive = pthread_mutex_t?" "$SVC" || {
+              awk '/^typealias LockPrimitive = SRWLOCK$/{a=1; print; next}
+                a&&/^#else$/{print "#elseif os(OpenBSD) || os(FreeBSD)"; a=0; b=1; next}
+                b&&/^@usableFromInline$/{b=0; print; c=1; next}
+                c&&/^typealias LockPrimitive = pthread_mutex_t$/{print "typealias LockPrimitive = pthread_mutex_t?\n#else\n@usableFromInline\n"$0; c=0; next}
+                1' "$SVC" > /tmp/_svc.swift
+              mv /tmp/_svc.swift "$SVC"
+              sed -i '' 's/var attr = pthread_mutexattr_t()/var attr: pthread_mutexattr_t? = pthread_mutexattr_t(bitPattern: 0)/' "$SVC"
+              echo "Patched $SVC"
+            }
+          fi
+          LOCKING=$(find .build/checkouts -path "*/swift-async-algorithms*/AsyncAlgorithms/Locking.swift" 2>/dev/null | head -1)
+          if [ -n "$LOCKING" ]; then
+            grep -qF "os(FreeBSD) || os(OpenBSD)" "$LOCKING" || {
+              sed -i '' 's/^  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)$/  #elseif os(FreeBSD) || os(OpenBSD)\n  typealias Primitive = pthread_mutex_t?\n  #elseif canImport(Glibc) || canImport(Musl) || canImport(Bionic) || canImport(wasi_pthread)/' "$LOCKING"
+              echo "Patched $LOCKING"
+            }
+          fi
+          swift build 2>&1
+          swift test --filter SwiftlyTests 2>&1
+          ENDSSH
+        timeout-minutes: 60
+
   macos-tests-selfhosted:
     name: Test (Self Hosted) / macOS Tahoe ARM64
     runs-on: [self-hosted, macos, tahoe, ARM64]
