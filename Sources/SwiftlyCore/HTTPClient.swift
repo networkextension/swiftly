@@ -402,9 +402,17 @@ extension SwiftlyWebsiteAPI.Components.Schemas.Platform {
             PlatformDefinition(
                 name: "ubuntu2404", nameFull: "ubuntu24.04", namePretty: "Ubuntu 24.04"
             )
+        case "Ubuntu 26.04":
+            PlatformDefinition(
+                name: "ubuntu2604", nameFull: "ubuntu26.04", namePretty: "Ubuntu 26.04"
+            )
         case "Debian 12":
             PlatformDefinition(
                 name: "debian12", nameFull: "debian12", namePretty: "Debian GNU/Linux 12"
+            )
+        case "Debian 13":
+            PlatformDefinition(
+                name: "debian13", nameFull: "debian13", namePretty: "Debian GNU/Linux 13"
             )
         case "Fedora 39":
             PlatformDefinition(
@@ -414,6 +422,8 @@ extension SwiftlyWebsiteAPI.Components.Schemas.Platform {
             PlatformDefinition(
                 name: "fedora41", nameFull: "fedora41", namePretty: "Fedora Linux 41"
             )
+        case "FreeBSD":
+            PlatformDefinition.freebsd
         default:
             nil
         }
@@ -445,7 +455,7 @@ extension SwiftlyWebsiteAPI.Components.Schemas.DevToolchainForArch {
                     message: "malformatted release branch: \"\(majorString).\(minorString)\"")
             }
             let patch = match.output.3.map(String.init)
-            branch = .release(major: major, minor: minor, patch: patch)
+            branch = .releaseNormalized(major: major, minor: minor, patch: patch)
         } else {
             branch = .main
         }
@@ -554,8 +564,10 @@ public struct SwiftlyHTTPClient: Sendable {
             switch platform.name
         {
         // These are new platforms that aren't yet in the list of known platforms in the OpenAPI schema
-        case PlatformDefinition.ubuntu2404.name, PlatformDefinition.debian12.name,
-             PlatformDefinition.fedora39.name, PlatformDefinition.fedora41.name:
+        case PlatformDefinition.ubuntu2404.name, PlatformDefinition.ubuntu2604.name,
+             PlatformDefinition.debian12.name, PlatformDefinition.debian13.name,
+             PlatformDefinition.fedora39.name, PlatformDefinition.fedora41.name,
+             PlatformDefinition.freebsd.name:
             .init(platform.name)
 
         case PlatformDefinition.ubuntu2204.name:

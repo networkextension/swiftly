@@ -8,12 +8,16 @@ import SystemPackage
 import LinuxPlatform
 #elseif os(macOS)
 import MacOSPlatform
+#elseif os(FreeBSD)
+import FreeBSDPlatform
 #endif
 
 #if os(Linux)
 let currentPlatform: Platform = Linux.currentPlatform
 #elseif os(macOS)
 let currentPlatform: Platform = MacOS.currentPlatform
+#elseif os(FreeBSD)
+let currentPlatform: Platform = FreeBSD.currentPlatform
 #else
 #error("Unsupported platform")
 #endif
@@ -96,13 +100,13 @@ struct TestSwiftly: AsyncParsableCommand {
         let swiftlyArchiveFile = FilePath(swiftlyArchive)
 
         print("Extracting swiftly release")
-#if os(Linux)
+#if os(Linux) || os(FreeBSD)
         try await sys.tar().extract(.verbose, .compressed, .archive(swiftlyArchiveFile)).run()
 #elseif os(macOS)
         try await sys.installer(.verbose, .pkg(swiftlyArchiveFile), .target("CurrentUserHomeDirectory")).run()
 #endif
 
-#if os(Linux)
+#if os(Linux) || os(FreeBSD)
         let extractedSwiftly = FilePath("./swiftly")
 #elseif os(macOS)
         let extractedSwiftly = FilePath((fs.home / ".swiftly/bin/swiftly").string)
@@ -124,11 +128,11 @@ struct TestSwiftly: AsyncParsableCommand {
             ])
 
             let config = Configuration(
-                .path(extractedSwiftly),
+                executable: .path(extractedSwiftly),
                 arguments: ["init", "--assume-yes", "--no-modify-profile", "--skip-install"],
                 environment: env
             )
-            let result = try await Subprocess.run(config, output: .standardOutput, error: .standardError)
+            let result = try await Subprocess.run(config, output: .currentStandardOutput, error: .currentStandardError)
             if !result.terminationStatus.isSuccess {
                 throw RunProgramError(terminationStatus: result.terminationStatus, config: config)
             }
@@ -145,11 +149,11 @@ struct TestSwiftly: AsyncParsableCommand {
             }
 
             let config = Configuration(
-                .path(extractedSwiftly),
+                executable: .path(extractedSwiftly),
                 arguments: ["init", "--assume-yes", "--skip-install"],
                 environment: env
             )
-            let result = try await Subprocess.run(config, output: .standardOutput, error: .standardError)
+            let result = try await Subprocess.run(config, output: .currentStandardOutput, error: .currentStandardError)
             if !result.terminationStatus.isSuccess {
                 throw RunProgramError(terminationStatus: result.terminationStatus, config: config)
             }
@@ -160,8 +164,8 @@ struct TestSwiftly: AsyncParsableCommand {
 
         if NSUserName() == "root" {
             if try await fs.exists(atPath: "./post-install.sh") {
-                let config = Configuration(.path(shell), arguments: ["./post-install.sh"])
-                let result = try await Subprocess.run(config, input: .standardInput, output: .standardOutput, error: .standardError)
+                let config = Configuration(executable: .path(shell), arguments: ["./post-install.sh"])
+                let result = try await Subprocess.run(config, input: .currentStandardInput, output: .currentStandardOutput, error: .currentStandardError)
                 if !result.terminationStatus.isSuccess {
                     throw RunProgramError(terminationStatus: result.terminationStatus, config: config)
                 }
